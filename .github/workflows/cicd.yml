@@ -14,8 +14,9 @@ env:
     python_version: 3.11  
     IMAGE_NAME: portofolio
     AWS_REGION: us-east-1
-    ACCOUNT_ID: ${{ secret.ACCOUNT_ID }}
-    ECR_REPO: $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$IMAGE_NAME 
+    ACCOUNT_ID: ${{ secrets.ACCOUNT_ID }}
+    ECR_REGISTRY: ${{ secrets.ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com
+    ECR_REPO: ${{ secrets.ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/${{ env.IMAGE_NAME }}
 jobs:
     build:
       runs-on: ubuntu-latest
@@ -31,10 +32,39 @@ jobs:
         - name: Configure AWS credentials (OIDC)
           uses: aws-actions/configure-aws-credentials@v4
           with:
-            role-to-assume: ${{ secret.ROLE_ARN }}
+            role-to-assume: ${{ secrets.ROLE_ARN }}
             aws-region: <AWS_REGION>
         - name: Build image
           run: docker build -t handes007/portcicd .
         
         - name: Check cridentials
           run: aws s3 ls
+
+        - name: Login to Amazon ECR
+          uses: aws-actions/amazon-ecr-login@v2
+          
+        - name: Build Docker image
+          run: |
+            IMAGE_TAG=$(date +%Y%m%d%H%M%S)
+            echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+            docker build -t ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:$IMAGE_TAG .
+            docker build -t $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG .
+        - name: Tag Docker image
+          run: |
+             dockeker tag ${{ env.IMAGE_NAME }}: latest ${{ env.ECR_REPO }}:latest
+            # dockeker tag ${{ env.IMAGE_NAME }}: latest ${{ env.ECR_REPO }}:v2.0
+        - name: Install Trivy
+          uses: aquasecurity/trivy-action@0.20.0
+
+        - name: Scan Docker image with Trivy
+          uses: aquasecurity/trivy-action@0.20.0
+          with:
+            image-ref: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }}
+            format: 'table'
+            exit-code: '1' # Fail on high severity
+            vuln-type: 'os,library' 
+            severity: 'HIGH,CRITICAL'
+
+        - name: Push image to ECR
+          run: |
+            docker push $ECR_REGISTRY/$ECR_REPO:$IMAGE_TAG    
